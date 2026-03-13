@@ -1,0 +1,8 @@
+/target
+*.db
+*.sqlite
+*.lime
+*.raw
+*.dmp
+*.log
+.env
