@@ -372,9 +372,11 @@ impl Default for SynScanner {
 pub enum ScanMethod {
     /// TCP connect scan (no privileges required)
     Connect,
-    /// SYN scan (requires root/admin)
+    /// SYN scan (requires root/admin, pnet-based)
     Syn,
-    /// Auto-detect: try SYN, fallback to connect
+    /// AF_PACKET + MMAP zero-copy scan (Linux only, masscan-level performance)
+    AfPacket,
+    /// Auto-detect: try AF_PACKET -> SYN -> connect
     Auto,
 }
 
@@ -385,6 +387,7 @@ impl std::str::FromStr for ScanMethod {
         match s.to_lowercase().as_str() {
             "connect" | "tcp" => Ok(ScanMethod::Connect),
             "syn" | "stealth" | "half-open" => Ok(ScanMethod::Syn),
+            "afpacket" | "af_packet" | "fast" | "mmap" => Ok(ScanMethod::AfPacket),
             "auto" => Ok(ScanMethod::Auto),
             _ => Err(anyhow!("Unknown scan method: {}", s)),
         }
@@ -396,6 +399,7 @@ impl std::fmt::Display for ScanMethod {
         match self {
             ScanMethod::Connect => write!(f, "connect"),
             ScanMethod::Syn => write!(f, "syn"),
+            ScanMethod::AfPacket => write!(f, "afpacket"),
             ScanMethod::Auto => write!(f, "auto"),
         }
     }

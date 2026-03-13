@@ -432,6 +432,14 @@ async fn run_scan(
 
         // Show scan method
         let method_display = match scan_method {
+            ScanMethod::AfPacket => {
+                if SynScanner::check_privileges() {
+                    "\x1b[35mAF_PACKET + MMAP (zero-copy, masscan-level)\x1b[0m"
+                } else {
+                    println!("\x1b[33mWarning: AF_PACKET requires root/admin privileges\x1b[0m");
+                    "\x1b[33mAF_PACKET (will fallback to connect)\x1b[0m"
+                }
+            }
             ScanMethod::Syn => {
                 if SynScanner::check_privileges() {
                     "\x1b[32mSYN (stealth, ~2 packets/port)\x1b[0m"
@@ -443,14 +451,14 @@ async fn run_scan(
             ScanMethod::Connect => "\x1b[36mTCP Connect (~6 packets/port)\x1b[0m",
             ScanMethod::Auto => {
                 if SynScanner::check_privileges() {
-                    "\x1b[32mAuto → SYN (has privileges)\x1b[0m"
+                    "\x1b[35mAuto → AF_PACKET/SYN (has privileges)\x1b[0m"
                 } else {
                     "\x1b[36mAuto → Connect (no privileges)\x1b[0m"
                 }
             }
         };
         println!("\x1b[2mMethod: {}\x1b[0m", method_display);
-        if scan_method == ScanMethod::Syn {
+        if scan_method == ScanMethod::Syn || scan_method == ScanMethod::AfPacket {
             println!("\x1b[2mRate: {} packets/sec\x1b[0m", rate);
         }
     }
@@ -813,6 +821,13 @@ async fn run_discover(
 
     // Show scan method
     let method_display = match scan_method {
+        ScanMethod::AfPacket => {
+            if SynScanner::check_privileges() {
+                "\x1b[35mAF_PACKET (zero-copy)\x1b[0m"
+            } else {
+                "\x1b[36mConnect (no root)\x1b[0m"
+            }
+        }
         ScanMethod::Syn => {
             if SynScanner::check_privileges() {
                 "\x1b[32mSYN (fast)\x1b[0m"
@@ -823,7 +838,7 @@ async fn run_discover(
         ScanMethod::Connect => "\x1b[36mConnect\x1b[0m",
         ScanMethod::Auto => {
             if SynScanner::check_privileges() {
-                "\x1b[32mAuto → SYN\x1b[0m"
+                "\x1b[35mAuto → AF_PACKET/SYN\x1b[0m"
             } else {
                 "\x1b[36mAuto → Connect\x1b[0m"
             }

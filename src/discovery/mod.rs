@@ -2,19 +2,26 @@
 //!
 //! High-performance async port scanning and service detection.
 //!
-//! Supports two scan methods:
+//! Supports three scan methods:
 //! - **TCP Connect**: Works without privileges, 5-6 packets per port
-//! - **SYN Scan**: Requires root/admin, 2 packets per port (masscan-style)
+//! - **SYN Scan**: Requires root/admin, 2 packets per port (pnet-based)
+//! - **AF_PACKET**: Masscan-level performance via zero-copy MMAP ring buffer (Linux only)
 
 mod scanner;
 mod service;
 mod models;
 mod syn_scanner;
 
+#[cfg(target_os = "linux")]
+pub mod afpacket;
+
 pub use scanner::PortScanner;
 pub use service::ServiceDetector;
 pub use models::{Host, ScanResult, ServiceInfo, ParsedVersion};
 pub use syn_scanner::{SynScanner, SynScannerConfig, ScanMethod, SynScanResult};
+
+#[cfg(target_os = "linux")]
+pub use afpacket::{AfPacketScanner, AfPacketScanConfig, AfPacketScanResult};
 
 use anyhow::Result;
 use std::net::{IpAddr, Ipv4Addr};
@@ -152,16 +159,67 @@ impl NetworkDiscovery {
                     self.port_scanner.scan_host(ip, ports).await?
                 }
             }
+            #[cfg(target_os = "linux")]
+            ScanMethod::AfPacket => {
+                debug!("Using AF_PACKET zero-copy scan for {}", ip);
+                if let IpAddr::V4(ipv4) = ip {
+                    let scanner = AfPacketScanner::new();
+                    scanner.scan(ipv4, ports).await?.open_ports
+                } else {
+                    warn!("AF_PACKET scan only supports IPv4, falling back to connect");
+                    self.port_scanner.scan_host(ip, ports).await?
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            ScanMethod::AfPacket => {
+                warn!("AF_PACKET is Linux-only, falling back to SYN scan");
+                if let IpAddr::V4(ipv4) = ip {
+                    self.syn_scanner.scan(ipv4, ports).await?.open_ports
+                } else {
+                    self.port_scanner.scan_host(ip, ports).await?
+                }
+            }
             ScanMethod::Auto => {
-                // Try SYN first if we have privileges and it's IPv4
                 if let IpAddr::V4(ipv4) = ip {
                     if SynScanner::check_privileges() {
-                        debug!("Auto: Using SYN scan for {} (has privileges)", ip);
-                        match self.syn_scanner.scan(ipv4, ports).await {
-                            Ok(result) => result.open_ports,
-                            Err(e) => {
-                                warn!("SYN scan failed: {}, falling back to connect", e);
-                                self.port_scanner.scan_host(ip, ports).await?
+                        // Try AF_PACKET first (Linux), then SYN, then connect
+                        #[cfg(target_os = "linux")]
+                        {
+                            if AfPacketScanner::is_available() {
+                                debug!("Auto: Using AF_PACKET scan for {} (high-performance)", ip);
+                                match AfPacketScanner::new().scan(ipv4, ports).await {
+                                    Ok(result) => result.open_ports,
+                                    Err(e) => {
+                                        warn!("AF_PACKET scan failed: {}, trying SYN scan", e);
+                                        match self.syn_scanner.scan(ipv4, ports).await {
+                                            Ok(result) => result.open_ports,
+                                            Err(e) => {
+                                                warn!("SYN scan failed: {}, falling back to connect", e);
+                                                self.port_scanner.scan_host(ip, ports).await?
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                debug!("Auto: Using SYN scan for {} (AF_PACKET unavailable)", ip);
+                                match self.syn_scanner.scan(ipv4, ports).await {
+                                    Ok(result) => result.open_ports,
+                                    Err(e) => {
+                                        warn!("SYN scan failed: {}, falling back to connect", e);
+                                        self.port_scanner.scan_host(ip, ports).await?
+                                    }
+                                }
+                            }
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        {
+                            debug!("Auto: Using SYN scan for {} (has privileges)", ip);
+                            match self.syn_scanner.scan(ipv4, ports).await {
+                                Ok(result) => result.open_ports,
+                                Err(e) => {
+                                    warn!("SYN scan failed: {}, falling back to connect", e);
+                                    self.port_scanner.scan_host(ip, ports).await?
+                                }
                             }
                         }
                     } else {
